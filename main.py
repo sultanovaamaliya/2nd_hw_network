@@ -9,6 +9,16 @@ def dns_server():
     dom = input("Введите домен: ")
     server_ip = A_ROOT
 
+    if ".multiply." in dom:
+        index = dom.find(".multiply.")
+        new_dom = dom[:index]
+        arr = new_dom.split(".")
+        mult = 1
+        for x in arr:
+            mult *= int(x)
+        print(f"127.0.0.{mult % 256}")
+        return
+
     while True:
         header = struct.pack("!HHHHHH", random.randint(1, 65535), 0, 1, 0, 0, 0)
 
