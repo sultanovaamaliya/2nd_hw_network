@@ -7,6 +7,7 @@ A_ROOT = "198.41.0.4"
 
 def dns_server():
     dom = input("Введите домен: ")
+    type_dom = input("Тип записи: ").strip().upper()
     server_ip = A_ROOT
 
     if ".multiply." in dom:
@@ -19,6 +20,19 @@ def dns_server():
         print(f"127.0.0.{mult % 256}")
         return
 
+    QTYPE_MAP = {
+        "A": 1,
+        "AAAA": 28,
+        "CNAME": 5,
+        "MX": 15,
+        "NS": 2,
+        "SOA": 6,
+        "TXT": 16,
+        "RPZ": 127,
+        "ANY": 255
+    }
+    qtype = QTYPE_MAP.get(type_dom, 1)  # по умолчанию A
+
     while True:
         header = struct.pack("!HHHHHH", random.randint(1, 65535), 0, 1, 0, 0, 0)
 
@@ -29,7 +43,7 @@ def dns_server():
             quest_body += bytes(l) + encod
         quest_body += b'\x00'
 
-        qtype_qclass = struct.pack("!HH", 1, 1)
+        qtype_qclass = struct.pack("!HH", qtype, 1)
 
         query = header + quest_body + qtype_qclass #ручное формирование запроса
         print(f"\nЗапрос к {server_ip}: {dom}")
@@ -58,11 +72,57 @@ def dns_server():
             answers.append(rr)
 
         for rr in answers:
-            if rr["type"] == 1 and rr["name"].rstrip('.') == dom.rstrip('.'):
-                ip = socket.inet_ntoa(
-                    data[rr["rdata_offset"]:rr["rdata_offset"] + 4]
-                )
-                print(f"\nУСПЕХ: {dom} -> {ip}")
+            name = rr["name"].rstrip('.')
+            if name != dom.rstrip('.'):
+                continue
+
+            #если запрос не ANY, фильтруем по типу
+            if qtype != 255 and rr["type"] != qtype:
+                continue
+
+            off = rr["rdata_offset"]
+            length = rr["rdlength"]
+            rdata = data[off:off + length]
+            t = rr["type"]
+
+            if t == 1: #A
+                ip = socket.inet_ntoa(rdata)
+                print(f"\nУСПЕХ A: {dom} -> {ip}")
+                return
+
+            elif t == 28: #AAAA
+                ip6 = socket.inet_ntop(socket.AF_INET6, rdata)
+                print(f"\nУСПЕХ AAAA: {dom} -> {ip6}")
+                return
+
+            elif t in (2, 5): #NS/CNAME
+                target, _ = readname(data, off)
+                tname = "NS" if t == 2 else "CNAME"
+                print(f"\nУСПЕХ {tname}: {dom} -> {target}")
+                return
+
+            elif t == 15: #MX
+                pref = struct.unpack_from("!H", data, off)[0]
+                exch, _ = readname(data, off + 2)
+                print(f"\nУСПЕХ MX: {dom} -> {pref} {exch}")
+                return
+
+            elif t == 16: #TXT
+                ln = rdata[0]
+                txt = rdata[1:1 + ln].decode(errors="replace")
+                print(f'\nУСПЕХ TXT: {dom} -> "{txt}"')
+                return
+
+            elif t == 6: #SOA
+                mname, o2 = readname(data, off)
+                rname, o3 = readname(data, o2)
+                serial, refresh, retry, expire, minimum = struct.unpack_from("!IIIII", data, o3)
+                print(f"\nУСПЕХ SOA: {dom} -> {mname} {rname} {serial} {refresh} {retry} {expire} {minimum}")
+                return
+
+            else:
+                # для редких
+                print(f"\nУСПЕХ TYPE {t}: RDATA = {rdata.hex()}")
                 return
 
         zone_name = []
